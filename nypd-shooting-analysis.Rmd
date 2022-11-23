@@ -1,0 +1,162 @@
+---
+title: "NYPD Shooting"
+author: "Sean Baier"
+date: "`r Sys.Date()`"
+output: 
+    pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r load_tidyverse, echo=TRUE, include=FALSE}
+library(tidyverse)
+library(lubridate)
+library(modelr)
+```
+
+# Assignment
+
+Import, tidy and analyze the NYPD Shooting Incident data set obtained. 
+
+- Be sure your project is reproducible and contains some visualization and analysis. 
+- You may use the data to do any analysis that is of interest to you. 
+- You should include at least two visualizations and one model. 
+- Be sure to identify any bias possible in the data and in your analysis.
+
+
+## Load dependencies
+
+
+```
+library(tidyverse)
+library(lubridate)
+library(modelr)
+```
+
+
+## Raw Data for NYPD shootings
+
+Import raw data from url.
+
+<https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD>
+
+```{r get_nypd_data, echo=TRUE}
+shootings_data <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD")
+```
+
+
+## Tidy Raw Shootings Data
+
+- Some of the `perp_race` values are implicitly `UNKNOWN` due to them having the value `NA`. We are going to make these values explicitly `UNKNOWN` by mutating them.
+- Normalize column names to lowercase and snake_case format.
+- Remove unnecessary coordinate related columns since they are not needed for the following analysis.
+
+
+```{r, tidy_shootings_data, echo=TRUE}
+tidy_data <- shootings_data %>% 
+  rename(
+    full_date = OCCUR_DATE, 
+    time = OCCUR_TIME, 
+    neighborhood = BORO, 
+    precinct = PRECINCT, 
+    jurisdiction_code = JURISDICTION_CODE,
+    statistical_murder = STATISTICAL_MURDER_FLAG,
+    perp_age = PERP_AGE_GROUP,
+    perp_sex = PERP_SEX,
+    perp_race = PERP_RACE,
+    vic_age = VIC_AGE_GROUP,
+    vic_sex = VIC_SEX,
+    vic_race = VIC_RACE) %>% 
+  mutate(date = mdy(full_date)) %>%
+  separate(date, into =c("year", "month", "day")) %>%
+  replace_na(list(perp_race = "UNKNOWN")) %>%
+  select(-c(X_COORD_CD, Y_COORD_CD, Latitude, Longitude, Lon_Lat, INCIDENT_KEY, LOCATION_DESC))
+tidy_data
+```
+
+
+
+## Total number of shootings per month by neighborhood
+
+We are also going to separate the `date` into `month`, `day`, and `year` in order to analyze the per month shootings per neighborhood.
+
+```{r, total_shootings_per_month, echo=TRUE}
+plot <- ggplot(data = tidy_data) +
+  geom_bar(mapping = aes(x = month, fill = neighborhood), position = "dodge")
+
+plot + theme(
+  axis.text = element_text(size = rel(0.5))
+)
+```
+
+## Shootings by race in neighborhoods
+
+- Some potential bias might be to assume certain races might have higher numbers due to the fact that there is a higher population of those races in the neighborhood.
+- It might also be assumed that the reason for less complete data on the `perp_race` is because they may have escaped arrest.
+
+### Shootings by victim's race in neighborhoods
+
+```{r, shootings_by_vic_race, echo=TRUE}
+plot <- ggplot(data = tidy_data) + 
+  geom_bar(mapping = aes(x = neighborhood, fill = vic_race), position = "dodge")
+
+plot + theme(
+  axis.text = element_text(size = rel(0.5))
+)
+```
+
+### Shootings by perpetrator race in neighborhoods
+
+```{r, race_neighborhoods, echo=TRUE}
+plot <- ggplot(data = tidy_data) + 
+  geom_bar(mapping = aes(x = neighborhood, fill = perp_race), position = "dodge")
+
+plot + theme(
+  axis.text = element_text(size = rel(0.5))
+)
+```
+
+## Compare shootings to deaths per neighborhood
+
+```{r, shootings_to_deaths, echo=TRUE}
+shootings_to_deaths <- tidy_data %>%
+  group_by(neighborhood, month) %>%
+  mutate(shootings = n(), deaths = sum(statistical_murder)) %>%
+  select(neighborhood, shootings, statistical_murder, deaths, month, full_date) %>%
+  ungroup() %>%
+  summarize(neighborhood, month, shootings, statistical_murder, deaths, full_date)
+```
+
+```{r, plot_shooting_to_deaths, echo=TRUE}
+plot <- ggplot(data = shootings_to_deaths) + 
+  geom_bar(mapping = aes(x = neighborhood, fill = statistical_murder), position = "dodge")
+
+plot + theme(
+  axis.text = element_text(size = rel(0.5))
+)
+```
+
+
+# Model shootings to deaths
+
+
+```{r, neighborhood_model, echo=TRUE}
+data <- tidy_data %>%
+  group_by(neighborhood, month) %>%
+  mutate(neighborhood, month, shootings = n(), deaths = sum(statistical_murder)) %>%
+  ungroup()
+
+mod = lm(deaths ~ shootings, data = data)
+summary(mod)
+```
+
+
+```{r, plot_model, echo=TRUE}
+data %>% 
+  mutate(pred = predict(mod)) %>%
+  ggplot() +
+  geom_point(aes(x = shootings, y = deaths), color = "blue") +
+  geom_point(aes(x = shootings, y = pred), color = "red")
+```
